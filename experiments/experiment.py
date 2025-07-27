@@ -1,245 +1,199 @@
 """Base class for reproducible experiments."""
 
-from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
 import json
 import os
-from datetime import datetime
-
-from experiments.types import TrainingJob, TrainingJobConfig, BaseExperimentConfig
-from experiments.launch import launch_training_run
-from experiments.monitoring import get_wandb_run_name_from_sky_job
 import subprocess
+from abc import ABC, abstractmethod
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+import logging
+
+from experiments.skypilot_service import get_skypilot_service
+from experiments.training_job import TrainingJob, TrainingJobConfig
+from experiments.notebooks.notebook import write_notebook, NotebookConfig, AnalysisConfig
+from metta.common.util.config import Config
+from pydantic import model_validator, Field
 
 
-class ExperimentConfig(TrainingJobConfig):
+class ExperimentConfig(Config):
+    """Base configuration for all experiments."""
+
+    name: str
+    user: Optional[str] = None
+    launch: bool = False
+    previous_job_ids: Optional[List[str]] = None
+    output_dir: Optional[str] = Field(default=None, description="Directory to save notebook, None to skip notebook generation")
+    notebook: Optional[NotebookConfig] = None
+
+
+class SingleJobExperimentConfig(ExperimentConfig, TrainingJobConfig):
+    """Configuration for experiments with a single training job."""
     pass
 
 
 class Experiment(ABC):
     """Base class for all experiments."""
 
-    def __init__(self, name: str):
-        self.name = name
-        self.user = os.environ.get("USER", "unknown")
+    def __init__(self, config: ExperimentConfig):
+        self.config = config
+        self.name = config.name
+        self.user = config.user or os.environ.get("USER", "unknown")
         self.created_at = datetime.now().isoformat()
-        self.launch_results = []
-        self.training_jobs: List[TrainingJob] = []
+        self.launched_training_jobs: List[TrainingJob] = []
+        self._training_job_configs: List[TrainingJobConfig] = []
 
-    @abstractmethod
-    def launch_training_runs(self) -> List[TrainingJob]:
-        """Launch training runs and return TrainingJob objects.
+    @property
+    def training_job_configs(self) -> List[TrainingJobConfig]:
+        """Override this property to define the training jobs for this experiment."""
+        return []
 
-        This method should:
-        1. Launch one or more training runs
-        2. Create TrainingJob objects for successful launches
-        3. Store jobs in self.training_jobs
-        4. Return the list of TrainingJob objects
+    def training_jobs(self) -> List[TrainingJob]:
+        """Convert training job configs to TrainingJob objects."""
+        jobs = []
+        for i, config in enumerate(self.training_job_configs):
+            job_name = f"{self.name}_job_{i}"
+            jobs.append(TrainingJob(name=job_name, config=config))
+        return jobs
 
-        Returns:
-            List of TrainingJob objects for successful launches
-        """
-        pass
+    def run(self) -> Optional[str]:
+        """Run the experiment and return the notebook path if generated."""
+        self.load_or_launch_training_jobs()
 
-    def launch_training_run_from_config(self, run_name: str, config: TrainingJobConfig) -> Optional[TrainingJob]:
-        """Launch a training run from a TrainingJobConfig.
-
-        Args:
-            run_name: Name for the training run
-            config: TrainingJobConfig with launch parameters
-
-        Returns:
-            TrainingJob if successful, None otherwise
-        """
-        result = launch_training_run(
-            run_name=run_name,
-            curriculum=config.curriculum,
-            gpus=config.gpus,
-            nodes=config.nodes,
-            no_spot=config.no_spot,
-            skip_git_check=config.skip_git_check,
-            additional_args=config.additional_args,
-            wandb_tags=config.wandb_tags,
-        )
-
-        self.launch_results.append(result)
-
-        if result["success"]:
-            job = TrainingJob(
-                wandb_run_name=run_name,
-                skypilot_job_id=result.get("job_id"),
-                config=config,
-            )
-            self.training_jobs.append(job)
-            return job
-
-        return None
-
-    def generate_notebook(self, output_dir: Optional[str] = None) -> str:
-        """Generate analysis notebook for the experiment.
-
-        Args:
-            output_dir: Directory to save notebook. If None, uses experiments/scratch/.
-
-        Returns:
-            Path to generated notebook
-        """
-        if not self.training_jobs:
-            raise ValueError("No training runs launched yet. Call launch_training_runs() first.")
-
-        # Extract run names and job IDs from TrainingJob objects
-        wandb_run_names = [job.wandb_run_name for job in self.training_jobs]
-        skypilot_job_ids = [job.skypilot_job_id for job in self.training_jobs if job.skypilot_job_id]
-
-        if not wandb_run_names:
-            raise ValueError("No successful runs to analyze")
-
-        # Default to experiments/scratch/ directory
-        if output_dir is None:
-            output_dir = os.path.join("experiments", "scratch")
-
-        # Generate notebook
-        from experiments.notebooks.generation import generate_notebook_from_template
-
-        return generate_notebook_from_template(
-            experiment_name=self.name,
-            run_names=wandb_run_names,  # Maps to wandb_run_names internally
-            sky_job_ids=skypilot_job_ids if skypilot_job_ids else None,  # Maps to skypilot_job_ids internally
-            additional_metadata=self.metadata,
-            output_dir=output_dir,
-        )
-
-    def run(self, generate_notebook: bool = True) -> Dict[str, Any]:
-        """Run the complete experiment workflow.
-
-        Args:
-            generate_notebook: Whether to generate analysis notebook
-
-        Returns:
-            Dictionary with experiment results
-        """
-        print(f"Running experiment: {self.name}")
-        print("=" * 50)
-
-        # Launch training runs
-        launched_jobs = self.launch_training_runs()
-
-        # Generate notebook if requested and launches succeeded
-        notebook_path = None
-        if generate_notebook and launched_jobs:
-            try:
-                notebook_path = self.generate_notebook()
-                print(f"\nGenerated analysis notebook: {notebook_path}")
-            except Exception as e:
-                print(f"\nWarning: Failed to generate notebook: {str(e)}")
-
-        return {
-            "experiment_name": self.name,
-            "launched_jobs": launched_jobs,
-            "notebook_path": notebook_path,
-            "metadata": self.metadata,
-        }
-
-    def save_metadata(self, filepath: Optional[str] = None) -> str:
-        """Save experiment metadata to JSON file.
-
-        Args:
-            filepath: Path to save metadata. If None, auto-generates in experiments/scratch/.
-
-        Returns:
-            Path to saved file
-        """
-        if filepath is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{self.name}_{timestamp}_metadata.json"
-            filepath = os.path.join("experiments", "scratch", filename)
-
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-
-        with open(filepath, "w") as f:
-            json.dump(
-                {
-                    "metadata": self.metadata,
-                    "launch_results": self.launch_results,
-                },
-                f,
-                indent=2,
-            )
-
-        print(f"Saved metadata to: {filepath}")
-        return filepath
-
-    @classmethod
-    def create_notebook(cls, config: BaseExperimentConfig) -> str:
-        """Create a notebook from configuration, handling job loading and launching.
-
-        Args:
-            config: Experiment configuration
-
-        Returns:
-            Path to generated notebook
-        """
-        # Create instance - pass config if the experiment accepts it
-        # Check if the experiment class __init__ accepts a config parameter
-        import inspect
-
-        sig = inspect.signature(cls.__init__)
-        if "config" in sig.parameters:
-            instance = cls(config.name, config=config)
+        # Only generate notebook if output_dir is specified
+        if self.config.output_dir is not None:
+            return self.generate_notebook()
         else:
-            instance = cls(config.name)
+            log = logging.getLogger(__name__)
+            log.info("Skipping notebook generation (output_dir is None)")
+            return None
 
-        # Load existing jobs if provided
-        if config.job_ids:
-            print(f"Loading {len(config.job_ids)} existing jobs...")
-            for job_id in config.job_ids:
-                run_name = get_wandb_run_name_from_sky_job(job_id)
-                if run_name:
-                    job = TrainingJob(
-                        wandb_run_name=run_name,
-                        skypilot_job_id=job_id,
-                    )
-                    instance.training_jobs.append(job)
-                    print(f"  ✓ Job {job_id} → {run_name}")
-                else:
-                    print(f"  ✗ Job {job_id} → Could not find run name")
 
-        # Launch new runs if requested (and no jobs loaded)
-        if config.launch and not instance.training_jobs:
-            instance.launch_training_runs()
+    def load_training_jobs(self) -> List[TrainingJob]:
+        """Load training jobs from previous job IDs."""
 
-        # Generate notebook
-        from experiments.notebooks.generation import generate_notebook
+        training_jobs = self.training_jobs()
+        if len(training_jobs) != len(self.config.previous_job_ids):
+            raise ValueError(f"Number of training jobs ({len(training_jobs)}) does not match number of previous job IDs ({len(self.config.previous_job_ids)})")
+        for i, job in enumerate(training_jobs):
+            job.launched = True
+            job.success = True
+            job.job_id = self.config.previous_job_ids[i]
+            service = get_skypilot_service()
+            job.name = service.get_wandb_run_name_from_sky_job(job.job_id) or job.name
 
-        wandb_run_names = [job.wandb_run_name for job in instance.training_jobs] if instance.training_jobs else None
-        skypilot_job_ids = (
-            [job.skypilot_job_id for job in instance.training_jobs if job.skypilot_job_id]
-            if instance.training_jobs
-            else None
+        self.launched_training_jobs = training_jobs
+        self._training_job_configs = []
+        return training_jobs
+
+    def launch_training_jobs(self) -> List[TrainingJob]:
+        """Launch all training jobs in the experiment."""
+        log = logging.getLogger(__name__)
+        jobs = self.training_jobs()
+        
+        if not jobs:
+            print("No jobs to launch")
+            return []
+            
+        print(f"\nLaunching {len(jobs)} training job(s)...")
+        
+        for i, job in enumerate(jobs):
+            print(f"\n[{i+1}/{len(jobs)}] Launching {job.name}...")
+            start_time = datetime.now()
+            
+            success = job.launch()
+            
+            elapsed = (datetime.now() - start_time).total_seconds()
+            if success:
+                self.launched_training_jobs.append(job)
+                print(f"✓ Successfully launched {job.name} (took {elapsed:.1f}s)")
+                if job.job_id:
+                    print(f"  Job ID: {job.job_id}")
+            else:
+                log.error(f"Failed to launch training job: {job.name}")
+                print(f"✗ Failed to launch {job.name} (took {elapsed:.1f}s)")
+
+        self.launched_training_jobs = jobs
+        self._training_job_configs = []
+        
+        print(f"\nLaunch complete: {len([j for j in jobs if j.launched])} succeeded, {len([j for j in jobs if not j.launched])} failed")
+
+        return jobs
+
+    def load_or_launch_training_jobs(self):
+        """Load or launch training jobs."""
+        if self.config.launch:
+            self.launch_training_jobs()
+        elif self.config.previous_job_ids:
+            self.load_training_jobs()
+        else:
+            # Store the configs for potential later launching
+            self._training_job_configs = list(self.training_job_configs)
+            self.launched_training_jobs = []
+
+    def generate_notebook(self) -> str:
+        """Generate a notebook and return its path."""
+        log = logging.getLogger(__name__)
+
+        # Convert NotebookConfig to sections list
+        sections = []
+        if self.config.notebook:
+            nb_config = self.config.notebook
+            if nb_config.simplified:
+                # Simplified notebook with just config & monitor
+                sections = ["setup", "state", "config", "monitor"]
+            else:
+                # Full notebook with all requested sections
+                if nb_config.setup:
+                    sections.append("setup")
+                if nb_config.state:
+                    sections.append("state")
+                if nb_config.launch:
+                    sections.append("launch")
+                if nb_config.monitor:
+                    sections.append("monitor")
+                if nb_config.analysis:
+                    sections.append("analysis")
+                if nb_config.replays:
+                    sections.append("replays")
+                if nb_config.scratch:
+                    sections.append("scratch")
+                if nb_config.export:
+                    sections.append("export")
+
+        notebook_path = write_notebook(
+            user=self.user,
+            name=self.name,
+            training_job_configs=self._training_job_configs,
+            launched_jobs=self.launched_training_jobs,
+            output_dir=self.config.output_dir,
+            sections=sections if sections else None,
         )
 
-        notebook_path = generate_notebook(
-            name=config.name,
-            description=config.description or f"Notebook for {instance.__class__.__name__}",
-            sections=config.sections,
-            wandb_run_names=wandb_run_names,
-            skypilot_job_ids=skypilot_job_ids,
-            additional_metadata=instance.metadata,
-            output_dir=config.output_dir,
-        )
-
-        # Open notebook if requested
-        if config.open_notebook:
-            print("\nOpening notebook in Jupyter...")
-            try:
-                subprocess.Popen(
-                    ["uv", "run", "jupyter", "notebook", notebook_path],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                print("✓ Jupyter notebook launched")
-            except Exception as e:
-                print(f"Failed to open notebook: {e}")
-                print(f"\nTo open manually:\n  uv run jupyter notebook {notebook_path}")
-
+        print(f"Notebook saved to: {notebook_path}")
         return notebook_path
+
+
+class SingleJobExperiment(Experiment):
+    """Base class for experiments with a single training job."""
+
+    def __init__(self, config: SingleJobExperimentConfig):
+        super().__init__(config)
+        # Type narrowing for better IDE support
+        self.config: SingleJobExperimentConfig = config
+
+    @property
+    def training_job_configs(self) -> List[TrainingJobConfig]:
+        """Create a single training job config from the experiment config."""
+        # Extract only the TrainingJobConfig fields from the combined config
+        training_config = TrainingJobConfig(
+            curriculum=self.config.curriculum,
+            gpus=self.config.gpus,
+            nodes=self.config.nodes,
+            spot=self.config.spot,
+            skip_git_check=self.config.skip_git_check,
+            wandb_tags=self.config.wandb_tags,
+            additional_args=self.config.additional_args,
+        )
+        return [training_config]
+

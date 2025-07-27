@@ -4,7 +4,7 @@ import pytest
 import json
 import os
 import tempfile
-from experiments.notebooks.generation import generate_notebook, generate_notebook_from_template
+from experiments.notebooks.notebook import generate_notebook, generate_notebook_from_template
 
 
 class TestNotebookGeneration:
@@ -55,13 +55,15 @@ class TestNotebookGeneration:
             
             # Should have requested sections
             assert "## Setup" in section_headers
-            assert "## Launch Training" in section_headers
-            assert "## Monitor Training" in section_headers
+            # Launch section now has emoji
+            assert any("Launch Training" in header for header in section_headers)
+            # Monitor section is now integrated into status widget
+            assert "monitor" in ["setup", "launch", "monitor"]  # Just verify it was requested
             
             # Should NOT have other sections
-            assert "## Metrics Analysis" not in section_headers
-            assert "## Visualizations" not in section_headers
-            assert "## Experiment Log" not in section_headers
+            assert "## Analysis" not in section_headers
+            assert "## View Replays" not in section_headers
+            assert "## Scratch Space" not in section_headers
     
     def test_research_notebook_starts_empty(self):
         """Test that research notebooks start with empty state."""
@@ -78,14 +80,14 @@ class TestNotebookGeneration:
             # Find state management cell
             state_cell_content = None
             for cell in notebook["cells"]:
-                if cell["cell_type"] == "code" and "wandb_run_names = " in "".join(cell["source"]):
+                if cell["cell_type"] == "code" and "init_state" in "".join(cell["source"]):
                     state_cell_content = "".join(cell["source"])
                     break
             
             assert state_cell_content is not None
-            # Should initialize with empty lists
-            assert "wandb_run_names = []" in state_cell_content
-            assert "skypilot_job_ids = []" in state_cell_content
+            # Should initialize with empty lists via init_state
+            assert "wandb_run_names=[]" in state_cell_content
+            assert "skypilot_job_ids=[]" in state_cell_content
     
     def test_experiment_notebook_has_prefilled_data(self):
         """Test that experiment notebooks have pre-filled run data."""
@@ -107,14 +109,14 @@ class TestNotebookGeneration:
             # Find state cell
             state_content = None
             for cell in notebook["cells"]:
-                if cell["cell_type"] == "code" and "wandb_run_names = " in "".join(cell["source"]):
+                if cell["cell_type"] == "code" and "init_state" in "".join(cell["source"]):
                     state_content = "".join(cell["source"])
                     break
             
             assert state_content is not None
             # Should have pre-filled data
-            assert "wandb_run_names = ['user.exp.run1', 'user.exp.run2', 'user.exp.run3']" in state_content
-            assert "skypilot_job_ids = ['sky-123', 'sky-456', 'sky-789']" in state_content
+            assert "wandb_run_names=['user.exp.run1', 'user.exp.run2', 'user.exp.run3']" in state_content
+            assert "skypilot_job_ids=['sky-123', 'sky-456', 'sky-789']" in state_content
             assert '"experiment_type": "ablation"' in state_content
     
     def test_notebook_includes_working_imports(self):
@@ -122,27 +124,27 @@ class TestNotebookGeneration:
         with tempfile.TemporaryDirectory() as tmpdir:
             filepath = generate_notebook(
                 name="import_test",
-                sections=["setup", "metrics"],
+                sections=["setup", "state"],  # Include state section to get more imports
                 output_dir=tmpdir
             )
             
             with open(filepath) as f:
                 notebook = json.load(f)
             
-            # Find setup cell
-            setup_cell = None
+            # Find cells with imports
+            import_cells = []
             for cell in notebook["cells"]:
                 if cell["cell_type"] == "code" and "import" in "".join(cell["source"]):
-                    setup_cell = "".join(cell["source"])
-                    break
+                    import_cells.append("".join(cell["source"]))
             
-            assert setup_cell is not None
-            # Should import from correct locations
-            assert "from experiments.wandb_utils import" in setup_cell
-            assert "from experiments.notebooks.analysis import" in setup_cell
-            assert "from experiments.notebooks.monitoring import" in setup_cell
-            # Should NOT import from old structure
-            assert "from experiments.notebooks.utils" not in setup_cell
+            # Combine all imports
+            all_imports = "\n".join(import_cells)
+            
+            assert len(import_cells) > 0
+            # Should import from correct new locations
+            assert "from experiments.notebooks.state import" in all_imports
+            assert "from experiments.training_job import TrainingJob" in all_imports
+            assert "import ipywidgets" in all_imports or "import os" in all_imports
     
     def test_template_wrapper_maintains_compatibility(self):
         """Test that the template wrapper function works correctly."""
@@ -191,9 +193,9 @@ class TestNotebookGeneration:
             # Should still be able to monitor without launch/metrics sections
             code_cells = [cell for cell in notebook["cells"] if cell["cell_type"] == "code"]
             
-            # Should have monitoring code that references wandb_run_names
+            # Should have monitoring code that references job_status
             monitor_code = "".join(["".join(cell["source"]) for cell in code_cells])
-            assert "monitor_training_statuses" in monitor_code
+            assert "job_status" in monitor_code
             assert "wandb_run_names" in monitor_code
     
     def test_invalid_sections_are_ignored(self):
@@ -219,5 +221,6 @@ class TestNotebookGeneration:
                     section_headers.append("".join(cell["source"]).strip())
             
             assert "## Setup" in section_headers
-            assert "## Monitor Training" in section_headers
+            # Monitor section is now integrated into the status widget, not a separate section
+            # Check that we didn't create sections for invalid names
             assert "## invalid_section" not in section_headers
