@@ -20,14 +20,14 @@ Usage:
 
 import sys
 import os
-from typing import Type, TypeVar, Optional, List
+from typing import Type, TypeVar
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from experiments.experiment import Experiment, ExperimentConfig
 from experiments.cli_formatter import format_help_with_defaults
 
-T = TypeVar('T', bound=ExperimentConfig)
-E = TypeVar('E', bound=Experiment)
+T = TypeVar("T", bound=ExperimentConfig)
+E = TypeVar("E", bound=Experiment)
 
 
 def runner(
@@ -47,45 +47,55 @@ def runner(
         name = None
         args_to_parse = sys.argv[1:]
 
-        if len(sys.argv) > 1 and not sys.argv[1].startswith('-'):
+        if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
             name = sys.argv[1]
             args_to_parse = sys.argv[2:]  # Remove the name from args to parse
 
         # Default name to config default or script name
         if name is None:
             # Try to get default from config class
-            if hasattr(config_class, 'name') and config_class.name:
+            if hasattr(config_class, "name") and config_class.name:
                 name = config_class.name
             else:
                 # Fall back to script name
                 script_name = os.path.basename(sys.argv[0])
-                if script_name.endswith('.py'):
+                if script_name.endswith(".py"):
                     script_name = script_name[:-3]
                 name = script_name
 
         # Get program name for help
         prog_name = os.path.basename(sys.argv[0])
-        if prog_name.endswith('.py'):
+        if prog_name.endswith(".py"):
             prog_name = prog_name[:-3]
 
         # Check if user wants custom help
-        if '--help' in args_to_parse or '-h' in args_to_parse or '--help-compact' in args_to_parse:
+        if (
+            "--help" in args_to_parse
+            or "-h" in args_to_parse
+            or "--help-compact" in args_to_parse
+        ):
             # Parse the arguments to get user overrides
             user_overrides = {}
             for i, arg in enumerate(args_to_parse):
-                if arg.startswith('--') and '=' in arg and arg not in ['--help', '-h', '--help-compact']:
-                    key, value = arg[2:].split('=', 1)
-                    key = key.replace('-', '_')
+                if (
+                    arg.startswith("--")
+                    and "=" in arg
+                    and arg not in ["--help", "-h", "--help-compact"]
+                ):
+                    key, value = arg[2:].split("=", 1)
+                    key = key.replace("-", "_")
                     # Try to parse the value
                     try:
                         # Try as boolean
-                        if value.lower() in ['true', 'false']:
-                            value = value.lower() == 'true'
+                        if value.lower() in ["true", "false"]:
+                            value = value.lower() == "true"
                         # Try as int
-                        elif value.isdigit() or (value.startswith('-') and value[1:].isdigit()):
+                        elif value.isdigit() or (
+                            value.startswith("-") and value[1:].isdigit()
+                        ):
                             value = int(value)
                         # Try as float
-                        elif '.' in value:
+                        elif "." in value:
                             try:
                                 value = float(value)
                             except ValueError:
@@ -93,36 +103,42 @@ def runner(
                     except:
                         pass  # Keep as string
                     user_overrides[key] = value
-            
+
             # Patch in the computed default for output_dir
             patched_defaults = {}
-            
+
             # Check if the config class has an explicit default for output_dir
             has_explicit_default = False
-            if hasattr(config_class, 'model_fields') and 'output_dir' in config_class.model_fields:
-                field_info = config_class.model_fields['output_dir']
+            if (
+                hasattr(config_class, "model_fields")
+                and "output_dir" in config_class.model_fields
+            ):
+                field_info = config_class.model_fields["output_dir"]
                 if field_info.default is not None and field_info.default != "":
                     # Use the explicit default from the config class
-                    patched_defaults['output_dir'] = field_info.default
+                    patched_defaults["output_dir"] = field_info.default
                     has_explicit_default = True
-            
+
             if not has_explicit_default:
                 try:
                     from metta.common.util.fs import get_repo_root
+
                     repo_root = get_repo_root()
-                    patched_defaults['output_dir'] = str(repo_root / "experiments" / "scratch")
+                    patched_defaults["output_dir"] = str(
+                        repo_root / "experiments" / "scratch"
+                    )
                 except:
-                    patched_defaults['output_dir'] = "experiments/scratch"
-            
+                    patched_defaults["output_dir"] = "experiments/scratch"
+
             # Default is expanded, use --help-compact for collapsed view
-            collapse = '--help-compact' in args_to_parse
+            collapse = "--help-compact" in args_to_parse
             help_text = format_help_with_defaults(
                 config_class,
                 prog_name,
                 has_positional_name=True,
                 collapse=collapse,
                 user_overrides=user_overrides,
-                patched_defaults=patched_defaults
+                patched_defaults=patched_defaults,
             )
             print(help_text)
             return 0
@@ -142,39 +158,45 @@ def runner(
 
         # Create the actual config from parsed values
         config_dict = cli_config.model_dump()
-        config_dict['name'] = name  # Override with our determined name
-        
+        config_dict["name"] = name  # Override with our determined name
+
         # Handle string "None" -> actual None conversion
-        if 'output_dir' in config_dict and config_dict['output_dir'] == 'None':
-            config_dict['output_dir'] = None
-        
+        if "output_dir" in config_dict and config_dict["output_dir"] == "None":
+            config_dict["output_dir"] = None
+
         # Set default output_dir if not specified
-        if 'output_dir' not in config_dict or config_dict['output_dir'] is None:
+        if "output_dir" not in config_dict or config_dict["output_dir"] is None:
             # Check if the config class has a non-None default for output_dir
             has_explicit_default = False
-            if hasattr(config_class, 'model_fields') and 'output_dir' in config_class.model_fields:
-                field_info = config_class.model_fields['output_dir']
+            if (
+                hasattr(config_class, "model_fields")
+                and "output_dir" in config_class.model_fields
+            ):
+                field_info = config_class.model_fields["output_dir"]
                 if field_info.default is not None and field_info.default != "":
                     # Use the explicit default from the config class
-                    config_dict['output_dir'] = field_info.default
+                    config_dict["output_dir"] = field_info.default
                     has_explicit_default = True
-            
+
             if not has_explicit_default:
                 # Try to find repo root for a more stable path
                 try:
                     from metta.common.util.fs import get_repo_root
+
                     repo_root = get_repo_root()
-                    config_dict['output_dir'] = str(repo_root / "experiments" / "scratch")
+                    config_dict["output_dir"] = str(
+                        repo_root / "experiments" / "scratch"
+                    )
                 except:
                     # Fallback to relative path if we can't find repo root
-                    config_dict['output_dir'] = "experiments/scratch"
-        
+                    config_dict["output_dir"] = "experiments/scratch"
+
         config = config_class(**config_dict)
 
         # Create and run experiment
         experiment = experiment_class(config)
         notebook_path = experiment.run()
-        
+
         # The notebook opening logic is handled by metta CLI
         # Just return success
         return 0

@@ -11,11 +11,13 @@ from metta.common.util.config import Config
 
 class AnalysisConfig(Config):
     """Configuration for analysis section of notebook."""
+
     sps: bool = True
 
 
 class NotebookConfig(Config):
     """Configuration for notebook generation."""
+
     setup: bool = True
     state: bool = True
     launch: bool = True
@@ -41,10 +43,10 @@ AVAILABLE_SECTIONS = {
 }
 
 # Default sections if none specified
-DEFAULT_SECTIONS = ["monitor", "launch", "analysis", "export"]
+DEFAULT_SECTIONS = ["setup", "state", "monitor", "config"]
 
 # Simplified sections for minimal notebook
-SIMPLIFIED_SECTIONS = ["setup", "config", "monitor"]
+SIMPLIFIED_SECTIONS = ["setup", "state", "config", "monitor"]
 
 
 def write_notebook(
@@ -56,14 +58,14 @@ def write_notebook(
     sections: Optional[List[str]] = None,
 ) -> str:
     """Write a Jupyter notebook for the experiment using the new API.
-    
+
     Args:
         user: Username running the experiment
         name: Name of the experiment
         launched_jobs: List of launched training jobs
         training_job_configs: List of training job configurations (not yet launched)
         output_dir: Directory to save notebook (defaults to experiments/scratch)
-        
+
     Returns:
         Path to the generated notebook
     """
@@ -75,11 +77,13 @@ def write_notebook(
         "launched_jobs": len(launched_jobs),
         "training_job_configs": len(training_job_configs),
     }
-    
+
     # Add training job configs to metadata if any
     if training_job_configs:
-        metadata["training_configs"] = [config.model_dump() for config in training_job_configs]
-    
+        metadata["training_configs"] = [
+            config.model_dump() for config in training_job_configs
+        ]
+
     # Use the existing generate_notebook function with TrainingJob objects
     return generate_notebook(
         name=name,
@@ -143,7 +147,11 @@ def generate_notebook(
             additional_metadata=additional_metadata,
         ),
         "metadata": {
-            "kernelspec": {"display_name": ".venv", "language": "python", "name": "python3"},
+            "kernelspec": {
+                "display_name": ".venv",
+                "language": "python",
+                "name": "python3",
+            },
             "language_info": {
                 "codemirror_mode": {"name": "ipython", "version": 3},
                 "file_extension": ".py",
@@ -222,12 +230,12 @@ def _create_notebook_cells(
 
     # If we have pre-filled jobs or IDs, add a summary cell
     if training_jobs or wandb_run_names or training_job_configs:
-        created_at = datetime.now().strftime('%Y-%m-%d %H:%M')
+        created_at = datetime.now().strftime("%Y-%m-%d %H:%M")
         user = "Unknown"
         if additional_metadata:
             created_at = additional_metadata.get("created_at", created_at)
             user = additional_metadata.get("user", user)
-            
+
         if training_jobs or training_job_configs:
             # Use TrainingJob objects
             total_jobs = len(training_jobs or []) + len(training_job_configs or [])
@@ -237,14 +245,14 @@ def _create_notebook_cells(
 **Total Jobs**: {total_jobs}
 **Created**: {created_at}
 **User**: {user}"""
-            
+
             if training_jobs:
                 summary += f"\n\n**Launched Jobs ({len(training_jobs)}):**"
                 for job in training_jobs:
                     job_info = f" (job: {job.job_id})" if job.job_id else ""
                     status = "✓" if job.success else "✗" if job.launched else "○"
                     summary += f"\n- {status} {job.name}{job_info}"
-                    
+
             if training_job_configs:
                 summary += f"\n\n**Ready to Launch ({len(training_job_configs)}):**"
                 for i, config in enumerate(training_job_configs):
@@ -258,12 +266,14 @@ def _create_notebook_cells(
 **Runs**: {len(wandb_run_names)} training runs
 **Created**: {created_at}
 **User**: {user}"""
-            
+
             if skypilot_job_ids:
                 summary += "\n\n**Tracked Jobs:**"
-                for i, (job_id, run_name) in enumerate(zip(skypilot_job_ids, wandb_run_names)):
+                for i, (job_id, run_name) in enumerate(
+                    zip(skypilot_job_ids, wandb_run_names)
+                ):
                     summary += f"\n- Job {job_id} → {run_name}"
-                    
+
         cells.append(_create_markdown_cell(summary))
 
     # Generate the notebook filename we'll use
@@ -272,23 +282,24 @@ def _create_notebook_cells(
     # Create a single Setup section with all initialization
     cells.append(_create_markdown_cell("## Setup"))
 
-    # Combine setup and state initialization into one section
-    setup_cells = _get_setup_section()
-    state_cells = _get_state_section(training_jobs, training_job_configs, wandb_run_names, skypilot_job_ids, additional_metadata, name)
-
-    # Mark all setup cells to be in the setup section
-    for cell in setup_cells + state_cells:
-        if cell["cell_type"] == "code":
-            cell["metadata"]["tags"] = cell["metadata"].get("tags", []) + ["setup"]
-
-    cells.extend(setup_cells)
-    cells.extend(state_cells)
+    # Get the setup code with data
+    setup_code = _get_combined_setup_code(
+        training_jobs, training_job_configs, additional_metadata
+    )
+    setup_cell = _create_code_cell(setup_code)
+    setup_cell["metadata"]["tags"] = ["setup"]
+    cells.append(setup_cell)
 
     # Generate cells for other requested sections
-    has_existing_jobs = bool(training_jobs or wandb_run_names)  # True if we have pre-filled jobs
+    has_existing_jobs = bool(
+        training_jobs or wandb_run_names
+    )  # True if we have pre-filled jobs
     section_generators = {
         "config": _get_config_section,
-        "launch": lambda: _get_launch_section(has_existing_jobs=has_existing_jobs, training_job_configs=training_job_configs),
+        "launch": lambda: _get_launch_section(
+            has_existing_jobs=has_existing_jobs,
+            training_job_configs=training_job_configs,
+        ),
         "monitor": _get_monitor_section,
         "analysis": _get_analysis_section,
         "replays": _get_replays_section,
@@ -297,8 +308,8 @@ def _create_notebook_cells(
     }
 
     for section in sections:
-        # Skip setup and state since we already added them
-        if section in section_generators:
+        # Skip setup since we already added it
+        if section in section_generators and section not in ["setup", "state"]:
             cells.extend(section_generators[section]())
 
     return cells
@@ -311,7 +322,7 @@ def _create_markdown_cell(content: str) -> Dict[str, Any]:
 
 def _create_code_cell(content: str, reactive: bool = False) -> Dict[str, Any]:
     """Create a code cell.
-    
+
     Args:
         content: The code content
         reactive: Whether this is a reactive cell (updates automatically)
@@ -319,176 +330,339 @@ def _create_code_cell(content: str, reactive: bool = False) -> Dict[str, Any]:
     metadata = {}
     if reactive:
         metadata["tags"] = ["reactive"]
-    return {"cell_type": "code", "execution_count": None, "metadata": metadata, "outputs": [], "source": content}
+    return {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": metadata,
+        "outputs": [],
+        "source": content,
+    }
 
 
+def _get_combined_setup_code(
+    training_jobs: Optional[List[TrainingJob]] = None,
+    training_job_configs: Optional[List[TrainingJobConfig]] = None,
+    additional_metadata: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Generate combined setup code in a single cell."""
+    # Create a JSON representation that can be passed directly
+    experiment_data = {"jobs": [], "configs": [], "metadata": additional_metadata or {}}
 
+    if training_jobs:
+        for job in training_jobs:
+            job_dict = {
+                "name": job.name,
+                "job_id": job.job_id,
+                "launched": job.launched,
+                "success": job.success,
+            }
+            if hasattr(job, "notes"):
+                job_dict["notes"] = job.notes
+            experiment_data["jobs"].append(job_dict)
 
-def _get_setup_section() -> List[Dict[str, Any]]:
-    """Generate setup section cells."""
-    # Single comprehensive setup cell
-    setup_cell = _create_code_cell("""# Initialize notebook
-%load_ext autoreload
-%autoreload 2
+    if training_job_configs:
+        for config in training_job_configs:
+            experiment_data["configs"].append(config.model_dump())
 
-import os
-from datetime import datetime
-import ipywidgets as widgets
-from IPython.display import display, clear_output
+    return f"""from experiments.notebooks.state import (
+    setup_notebook, print_configs, print_jobs, launch_all, kill_all,
+    print_wandb_runs, plot_sps, plot_metrics, 
+    list_replays, show_replay, export_notebook, reset_configs
+)
+from experiments.training_job import TrainingJobConfig
 
-print("✓ Notebook initialized")""")
-
-    return [setup_cell]
+state, configs = setup_notebook(experiment_data={repr(experiment_data)})"""
 
 
 def _get_config_section() -> List[Dict[str, Any]]:
     """Generate config section cells."""
-    from experiments.notebooks.widgets import config_widget
-    return config_widget.generate_cells()
+    cells = []
+
+    # Section header
+    cells.append(
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": "## 📝 Training Configuration",
+        }
+    )
+
+    # Cell 1: Print current configs
+    cells.append(
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": "print_configs(configs)",
+        }
+    )
+
+    # Cell 2: Edit configs and print again
+    cells.append(
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": """# Edit configs directly in Python
+configs[0].gpus = 4
+configs[0].curriculum = 'arena'
+configs[0].wandb_tags = ['experiment', 'test']
+
+# View updated configs
+print_configs(configs)
+
+# Reset to original if needed
+# reset_configs(state)""",
+        }
+    )
+
+    # Cell 3: Launch jobs
+    cells.append(
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": """# Launch all configured jobs
+launch_all(state)""",
+        }
+    )
+
+    return cells
 
 
-def _get_state_section(
-    training_jobs: Optional[List[TrainingJob]] = None,
-    training_job_configs: Optional[List[TrainingJobConfig]] = None,
-    wandb_run_names: Optional[List[str]] = None,
-    skypilot_job_ids: Optional[List[str]] = None,
-    additional_metadata: Optional[Dict[str, Any]] = None,
-    experiment_name: Optional[str] = None,
+def _get_launch_section(
+    has_existing_jobs: bool = False,
+    training_job_configs: List[TrainingJobConfig] = None,
 ) -> List[Dict[str, Any]]:
-    """Generate state management section cells."""
-    # Initialize state with pre-filled data or empty
-    if training_jobs or training_job_configs:
-        # Convert training jobs to a serializable format for notebook
-        jobs_data = []
-        if training_jobs:
-            for job in training_jobs:
-                job_dict = {
-                    'name': job.name,
-                    'job_id': job.job_id,
-                    'launched': job.launched,
-                    'success': job.success,
-                }
-                if hasattr(job, 'notes'):
-                    job_dict['notes'] = job.notes
-                jobs_data.append(job_dict)
-        
-        # Convert configs to serializable format
-        configs_data = []
-        if training_job_configs:
-            for config in training_job_configs:
-                configs_data.append(config.model_dump())
-        
-        init_code = f"""# Initialize run tracking
-from experiments.notebooks.state import init_state, add_job, add_run, list_runs, kill_all_jobs
-from experiments.training_job import TrainingJob, TrainingJobConfig
-
-# Create TrainingJob objects from experiment data
-training_jobs = []
-for job_data in {jobs_data}:
-    job = TrainingJob(name=job_data['name'])
-    job.job_id = job_data.get('job_id')
-    job.launched = job_data.get('launched', False)
-    job.success = job_data.get('success', False)
-    if 'notes' in job_data:
-        job.notes = job_data['notes']
-    training_jobs.append(job)
-
-# Create TrainingJobConfig objects from experiment data
-training_job_configs = []
-for config_data in {configs_data}:
-    config = TrainingJobConfig(**config_data)
-    training_job_configs.append(config)
-
-state = init_state(
-    training_jobs=training_jobs,
-    training_job_configs=training_job_configs,
-    metadata={json.dumps(additional_metadata, indent=2) if additional_metadata else "{}"}
-)
-
-# These are now dynamic properties that update automatically
-wandb_run_names = state.wandb_run_names
-skypilot_job_ids = state.skypilot_job_ids
-experiments = state.experiments
-
-print(f"✓ Ready. {{len(training_jobs)}} launched jobs, {{len(training_job_configs)}} configs ready to launch")"""    
-    else:
-        # Legacy initialization or empty state
-        init_code = f"""# Initialize run tracking
-from experiments.notebooks.state import init_state, add_job, add_run, list_runs, kill_all_jobs
+    """Generate launch section cells."""
+    cells = []
+    
+    # Section header
+    cells.append({
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": "## 🚀 Launch Jobs"
+    })
+    
+    # Launch instructions
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": """# Create and launch a single job
 from experiments.training_job import TrainingJob
 
-state = init_state(
-    wandb_run_names={wandb_run_names or []},
-    skypilot_job_ids={skypilot_job_ids or []},
-    metadata={json.dumps(additional_metadata, indent=2) if additional_metadata else "{}"}
+config = TrainingJobConfig(
+    curriculum='env/mettagrid/arena/basic',
+    gpus=1,
+    nodes=1,
+    spot=True,
+    wandb_tags=['experiment', 'test']
 )
 
-# These are now dynamic properties that update automatically
-wandb_run_names = state.wandb_run_names
-skypilot_job_ids = state.skypilot_job_ids
-experiments = state.experiments
+job = TrainingJob(name='my_experiment', config=config)
+if job.launch():
+    state.add_job(job)
+    print(f"✅ Launched {job.name} with ID: {job.job_id}")
+else:
+    print("❌ Launch failed")"""
+    })
+    
+    # Batch launch
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": """# Or use the config system
+configs.append(TrainingJobConfig(curriculum='arena'))
+configs.append(TrainingJobConfig(curriculum='harvest', gpus=2))
 
-{f'print("✓ Ready. Tracking {len(wandb_run_names)} runs")' if wandb_run_names else 'print("✓ Ready")'}"""
-
-    return [_create_code_cell(init_code)]
-
-
-def _get_launch_section(has_existing_jobs: bool = False, training_job_configs: List[TrainingJobConfig] = None) -> List[Dict[str, Any]]:
-    """Generate launch section cells."""
-    from experiments.notebooks.widgets import launch_widget
-    return launch_widget.generate_cells(training_job_configs)
+# Then launch all
+launch_all(state)"""
+    })
+    
+    return cells
 
 
 def _get_monitor_section() -> List[Dict[str, Any]]:
     """Generate monitoring section cells."""
-    from experiments.notebooks.widgets import skypilot_widget
-    return skypilot_widget.generate_cells(state_widget_in_header=True)
+    cells = []
+    
+    # Section header
+    cells.append({
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": "## 🚀 Monitor & Control Training Jobs"
+    })
+    
+    # Status display
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": "print_jobs(state)"
+    })
+    
+    # Launch controls
+    cells.append({
+        "cell_type": "code", 
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": """# Launch all configs
+launch_all(state)
 
+# Launch specific config
+# job = TrainingJob(name='my_job', config=configs[0])
+# job.launch()
+# state.add_job(job)"""
+    })
+    
+    # Kill controls
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": """# Kill all running jobs
+kill_all(state)
 
+# Kill specific job
+# state.service.cancel_job('job_id_here')"""
+    })
+    
+    return cells
 
 
 def _get_analysis_section() -> List[Dict[str, Any]]:
     """Generate analysis section cells."""
-    from experiments.notebooks.widgets import wandb_widget
-    return wandb_widget.generate_cells(include_sps=True)
+    cells = []
+    
+    # Section header
+    cells.append({
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": "## 📊 Analysis"
+    })
+    
+    # Show available runs
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": "print_wandb_runs(state)"
+    })
+    
+    # Plot SPS
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": """# Plot steps per second for all runs
+plot_sps(state)
+
+# Plot specific runs
+# plot_sps(state, run_indices=[0, 1])"""
+    })
+    
+    # Plot custom metrics
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": """# Plot any metric
+plot_metrics(state, 'overview/reward')
+
+# Other useful metrics:
+# plot_metrics(state, 'trainer/loss')
+# plot_metrics(state, 'trainer/explained_variance')
+# plot_metrics(state, 'eval/mean_reward', smooth=0.95)"""
+    })
+    
+    return cells
 
 
 def _get_replays_section() -> List[Dict[str, Any]]:
     """Generate replays section cells."""
-    return [
-        _create_markdown_cell("## View Replays"),
-        _create_code_cell("""# Import replay utilities
-from experiments.notebooks.widgets.replay_widget import show_replay, get_available_replays"""),
-        _create_code_cell("""# Show last replay for first run
-if state.wandb_run_names:
-    show_replay(state.wandb_run_names[0], step="last", width=1000, height=600)
-else:
-    print("No runs tracked yet. Launch some runs first!")"""),
-        _create_code_cell("""# Get available replays for first run
-if state.wandb_run_names:
-    replays = get_available_replays(state.wandb_run_names[0])
-    print(f"Available replays for {state.wandb_run_names[0]}:")
-    for replay in replays[-10:]:  # Show last 10
-        print(f"  {replay['label']} - Step {replay['step']}")"""),
-    ]
+    cells = []
+    
+    # Section header
+    cells.append({
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": "## 🎬 Replays"
+    })
+    
+    # List available replays
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": """# List replays for first run
+list_replays(state, run_index=0)
 
+# List for specific run
+# list_replays(state, run_index=2)"""
+    })
+    
+    # Show replay
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": """# Show latest replay
+show_replay(state, run_index=0, step='last')
 
+# Show specific step
+# show_replay(state, run_index=0, step=100000)
+
+# Larger display
+# show_replay(state, run_index=0, step='last', width=1200, height=800)"""
+    })
+    
+    return cells
 
 
 def _get_scratch_section() -> List[Dict[str, Any]]:
     """Generate scratch space section cells."""
-    return [_create_markdown_cell("## Scratch Space"), _create_code_cell("# Quick experiments and one-off analysis\n")]
+    return [
+        _create_markdown_cell("## Scratch Space"),
+        _create_code_cell("# Quick experiments and one-off analysis\n"),
+    ]
 
 
 def _get_export_section(notebook_filename: str) -> List[Dict[str, Any]]:
     """Generate export section cells."""
-    from experiments.notebooks.widgets import export_widget
-    cells = export_widget.generate_cells()
+    cells = []
     
-    # Add notebook-specific export cell
-    notebook_export_code = f'''# Export this specific notebook
-notebook_name = "{notebook_filename}"
-print(f"Current notebook: {{notebook_name}}")'''
+    # Section header
+    cells.append({
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": "## 📤 Export"
+    })
     
-    cells.insert(2, _create_code_cell(notebook_export_code))
+    # Export instructions
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": f"""# Export this notebook
+export_notebook()
+
+# Current notebook: {notebook_filename}"""
+    })
+    
     return cells

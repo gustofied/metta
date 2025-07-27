@@ -1,19 +1,17 @@
 """Base class for reproducible experiments."""
 
-import json
 import os
-import subprocess
-from abc import ABC, abstractmethod
+from abc import ABC
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 import logging
 
 from experiments.skypilot_service import get_skypilot_service
 from experiments.training_job import TrainingJob, TrainingJobConfig
-from experiments.notebooks.notebook import write_notebook, NotebookConfig, AnalysisConfig
+from experiments.notebooks.notebook import write_notebook, NotebookConfig
 from metta.common.util.config import Config
-from pydantic import model_validator, Field
+from pydantic import Field
 
 
 class ExperimentConfig(Config):
@@ -23,12 +21,18 @@ class ExperimentConfig(Config):
     user: Optional[str] = None
     launch: bool = False
     previous_job_ids: Optional[List[str]] = None
-    output_dir: Optional[str] = Field(default=None, description="Directory to save notebook, None to skip notebook generation")
-    notebook: Optional[NotebookConfig] = None
+    output_dir: Optional[str] = Field(
+        default=None,
+        description="Directory to save notebook, None to skip notebook generation",
+    )
+    notebook: Optional[NotebookConfig] = Field(
+        default_factory=lambda: NotebookConfig(simplified=True)
+    )
 
 
 class SingleJobExperimentConfig(ExperimentConfig, TrainingJobConfig):
     """Configuration for experiments with a single training job."""
+
     pass
 
 
@@ -68,13 +72,14 @@ class Experiment(ABC):
             log.info("Skipping notebook generation (output_dir is None)")
             return None
 
-
     def load_training_jobs(self) -> List[TrainingJob]:
         """Load training jobs from previous job IDs."""
 
         training_jobs = self.training_jobs()
         if len(training_jobs) != len(self.config.previous_job_ids):
-            raise ValueError(f"Number of training jobs ({len(training_jobs)}) does not match number of previous job IDs ({len(self.config.previous_job_ids)})")
+            raise ValueError(
+                f"Number of training jobs ({len(training_jobs)}) does not match number of previous job IDs ({len(self.config.previous_job_ids)})"
+            )
         for i, job in enumerate(training_jobs):
             job.launched = True
             job.success = True
@@ -90,19 +95,19 @@ class Experiment(ABC):
         """Launch all training jobs in the experiment."""
         log = logging.getLogger(__name__)
         jobs = self.training_jobs()
-        
+
         if not jobs:
             print("No jobs to launch")
             return []
-            
+
         print(f"\nLaunching {len(jobs)} training job(s)...")
-        
+
         for i, job in enumerate(jobs):
-            print(f"\n[{i+1}/{len(jobs)}] Launching {job.name}...")
+            print(f"\n[{i + 1}/{len(jobs)}] Launching {job.name}...")
             start_time = datetime.now()
-            
+
             success = job.launch()
-            
+
             elapsed = (datetime.now() - start_time).total_seconds()
             if success:
                 self.launched_training_jobs.append(job)
@@ -115,8 +120,10 @@ class Experiment(ABC):
 
         self.launched_training_jobs = jobs
         self._training_job_configs = []
-        
-        print(f"\nLaunch complete: {len([j for j in jobs if j.launched])} succeeded, {len([j for j in jobs if not j.launched])} failed")
+
+        print(
+            f"\nLaunch complete: {len([j for j in jobs if j.launched])} succeeded, {len([j for j in jobs if not j.launched])} failed"
+        )
 
         return jobs
 
@@ -164,8 +171,8 @@ class Experiment(ABC):
         notebook_path = write_notebook(
             user=self.user,
             name=self.name,
-            training_job_configs=self._training_job_configs,
             launched_jobs=self.launched_training_jobs,
+            training_job_configs=self._training_job_configs,
             output_dir=self.config.output_dir,
             sections=sections if sections else None,
         )
@@ -191,9 +198,8 @@ class SingleJobExperiment(Experiment):
             gpus=self.config.gpus,
             nodes=self.config.nodes,
             spot=self.config.spot,
-            skip_git_check=self.config.skip_git_check,
+            git_check=self.config.git_check,
             wandb_tags=self.config.wandb_tags,
             additional_args=self.config.additional_args,
         )
         return [training_config]
-

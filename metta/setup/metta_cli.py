@@ -323,39 +323,38 @@ class MettaCLI:
 
     def cmd_notebook(self, args, unknown_args) -> None:
         """Run a recipe using the specified recipe."""
-        import tempfile
-        import json
         import os
-        
+        import tempfile
+
         # Map recipe names to their script paths
         recipe_paths = {
             "arena": self.repo_root / "experiments" / "recipes" / "arena_experiment.py",
             # Add more recipes here as they become available
         }
-        
+
         if args.recipe not in recipe_paths:
             error(f"Unknown recipe: {args.recipe}")
             info(f"Available recipes: {', '.join(sorted(recipe_paths.keys()))}")
             sys.exit(1)
-        
+
         # Build command for the recipe
         cmd = [sys.executable, str(recipe_paths[args.recipe])]
-        
+
         # Pass name as first positional argument if provided
         if args.name:
             cmd.append(args.name)
-        
+
         # Pass through all unknown args
         cmd.extend(unknown_args)
-        
+
         # Create a temp file to capture the notebook path
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as tmp:
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as tmp:
             tmp_path = tmp.name
-            
+
         try:
             # Check if this is a help request
-            is_help_request = '--help' in unknown_args or '-h' in unknown_args or '--help-compact' in unknown_args
-            
+            is_help_request = "--help" in unknown_args or "-h" in unknown_args or "--help-compact" in unknown_args
+
             if is_help_request:
                 # For help, don't capture output to preserve colors
                 result = subprocess.run(cmd, cwd=self.repo_root)
@@ -363,7 +362,7 @@ class MettaCLI:
             else:
                 # For normal runs, capture output so we can find the notebook path
                 result = subprocess.run(cmd, cwd=self.repo_root, capture_output=True, text=True)
-                
+
                 if result.returncode != 0:
                     # Print any output and exit with same code
                     if result.stdout:
@@ -371,34 +370,34 @@ class MettaCLI:
                     if result.stderr:
                         print(result.stderr, file=sys.stderr)
                     sys.exit(result.returncode)
-                
+
                 # Print the output
                 if result.stdout:
                     print(result.stdout)
-            
+
             # Check if notebook was created and open it if requested
             if not args.quiet and "--output_dir=None" not in unknown_args:
                 # Try to find the notebook path in the output
-                for line in result.stdout.split('\n'):
+                for line in result.stdout.split("\n"):
                     if "Notebook saved to:" in line:
                         notebook_path = line.split("Notebook saved to:")[-1].strip()
                         self._open_notebook(notebook_path)
                         break
-                        
+
         except subprocess.CalledProcessError as e:
             sys.exit(e.returncode)
         finally:
             # Clean up temp file
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
-    
+
     def _open_notebook(self, notebook_path: str) -> None:
         """Open a notebook using the configured editor."""
         # Check environment variable for editor preference
         editor = os.environ.get("METTA_NOTEBOOK_EDITOR", "jupyter")
-        
+
         info(f"\nOpening notebook with {editor}...")
-        
+
         try:
             if editor == "code" or editor == "vscode":
                 # Open with VS Code
@@ -417,7 +416,7 @@ class MettaCLI:
                 error("Set METTA_NOTEBOOK_EDITOR to 'jupyter' or 'code'")
         except Exception as e:
             error(f"Failed to open notebook: {e}")
-            info(f"\nTo open manually:")
+            info("\nTo open manually:")
             info(f"  VS Code: code {notebook_path}")
             info(f"  Jupyter: uv run jupyter notebook {notebook_path}")
 
@@ -691,7 +690,9 @@ Examples:
         notebook_parser = subparsers.add_parser("notebook", help="Run experiments and create notebooks", add_help=False)
         notebook_parser.add_argument("recipe", help="Recipe to run (e.g., 'arena')")
         notebook_parser.add_argument("name", nargs="?", help="Name for the experiment")
-        notebook_parser.add_argument("--quiet", "-q", action="store_true", help="Don't open the notebook after creation")
+        notebook_parser.add_argument(
+            "--quiet", "-q", action="store_true", help="Don't open the notebook after creation"
+        )
 
         # Shell command
         subparsers.add_parser("shell", help="Start an IPython shell with Metta imports")
@@ -742,16 +743,16 @@ Examples:
 
         # Use parse_known_args to handle unknown arguments for test commands
         args, unknown_args = parser.parse_known_args()
-        
+
         # Special handling for notebook command with --help
-        if args.command == 'notebook' and ('--help' in sys.argv or '-h' in sys.argv):
+        if args.command == "notebook" and ("--help" in sys.argv or "-h" in sys.argv):
             # If we have a recipe specified, forward the help to the recipe
-            if hasattr(args, 'recipe') and args.recipe:
+            if hasattr(args, "recipe") and args.recipe:
                 # Let the command handler deal with forwarding help
                 pass
             else:
                 # No recipe specified, show metta's help for the command
-                parser.parse_args([args.command, '--help'])
+                parser.parse_args([args.command, "--help"])
 
         # Allow unknown args for certain commands
         if (

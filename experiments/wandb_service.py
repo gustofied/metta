@@ -2,7 +2,7 @@
 
 import logging
 from itertools import islice
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from datetime import datetime
 
 import pandas as pd
@@ -29,7 +29,9 @@ class WandbService:
                 raise
         return self._api
 
-    def get_run(self, run_name: str, entity: str = "metta-research", project: str = "metta") -> Run | None:
+    def get_run(
+        self, run_name: str, entity: str = "metta-research", project: str = "metta"
+    ) -> Run | None:
         """Get a wandb run by name.
 
         Args:
@@ -45,7 +47,6 @@ class WandbService:
         except Exception as e:
             self.log.error(f"Error getting run {run_name}: {str(e)}")
             return None
-
 
     def find_training_jobs(
         self,
@@ -91,16 +92,17 @@ class WandbService:
         if wandb_tags:
             filters["tags"] = {"$in": wandb_tags}
 
-        runs = islice(self.api.runs(f"{entity}/{project}", filters=filters, order=order_by), limit)
+        runs = islice(
+            self.api.runs(f"{entity}/{project}", filters=filters, order=order_by), limit
+        )
         return [run.name for run in runs]
-
 
     def fetch_metrics_data(
         self,
         run_names: list[str],
         samples: int = 1000,
         entity: str = "metta-research",
-        project: str = "metta"
+        project: str = "metta",
     ) -> dict[str, pd.DataFrame]:
         """Fetch metrics data for multiple runs.
 
@@ -120,7 +122,9 @@ class WandbService:
             if run is None:
                 continue
 
-            print(f"Fetching metrics for {run_name}: {run.state}, {run.created_at}\n{run.url}...")
+            print(
+                f"Fetching metrics for {run_name}: {run.state}, {run.created_at}\n{run.url}..."
+            )
 
             try:
                 metrics_df: pd.DataFrame = run.history(samples=samples, pandas=True)  # type: ignore
@@ -140,13 +144,12 @@ class WandbService:
 
         return metrics_dfs
 
-
     def get_run_statuses(
         self,
         run_names: list[str],
         show_metrics: list[str] | None = None,
         entity: str = "metta-research",
-        project: str = "metta"
+        project: str = "metta",
     ) -> pd.DataFrame:
         """Get status information for multiple runs.
 
@@ -162,7 +165,9 @@ class WandbService:
         if show_metrics is None:
             show_metrics = ["_step", "overview/reward"]
 
-        runs = self.api.runs(f"{entity}/{project}", filters={"name": {"$in": run_names}})
+        runs = self.api.runs(
+            f"{entity}/{project}", filters={"name": {"$in": run_names}}
+        )
 
         # Collect data for each run
         data = []
@@ -176,11 +181,15 @@ class WandbService:
             }
 
             if run:
-                row.update({
-                    "run_name": run_name,
-                    "state": run.state,
-                    "created": datetime.fromisoformat(run.created_at).strftime("%Y-%m-%d %H:%M"),
-                })
+                row.update(
+                    {
+                        "run_name": run_name,
+                        "state": run.state,
+                        "created": datetime.fromisoformat(run.created_at).strftime(
+                            "%Y-%m-%d %H:%M"
+                        ),
+                    }
+                )
 
                 if run.summary:
                     for metric in show_metrics:
@@ -201,8 +210,9 @@ class WandbService:
 
         return pd.DataFrame(data)
 
-
-    def get_run_config(self, run_name: str, entity: str = "metta-research", project: str = "metta") -> Dict[str, Any]:
+    def get_run_config(
+        self, run_name: str, entity: str = "metta-research", project: str = "metta"
+    ) -> Dict[str, Any]:
         """Fetch full configuration from a wandb run.
 
         Args:
@@ -220,13 +230,12 @@ class WandbService:
             self.log.error(f"Error fetching config for {run_name}: {str(e)}")
             return {}
 
-
     def get_training_logs(
         self,
         run_name: str,
         log_type: str = "stdout",
         entity: str = "metta-research",
-        project: str = "metta"
+        project: str = "metta",
     ) -> List[str]:
         """Fetch training logs (stdout/stderr) from a wandb run.
 
@@ -244,7 +253,7 @@ class WandbService:
 
             # Get log files
             files = run.files()
-            log_filename = f"output.log" if log_type == "stdout" else f"error.log"
+            log_filename = "output.log" if log_type == "stdout" else "error.log"
 
             for file in files:
                 if file.name.endswith(log_filename):
@@ -269,4 +278,3 @@ def get_wandb_service() -> WandbService:
     if _wandb_service is None:
         _wandb_service = WandbService()
     return _wandb_service
-

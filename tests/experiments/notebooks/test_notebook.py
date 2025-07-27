@@ -1,226 +1,321 @@
-"""Tests for notebook generation - focusing on outcomes."""
+"""Tests for notebook generation with pythonic interface."""
 
-import pytest
 import json
 import os
 import tempfile
+
 from experiments.notebooks.notebook import generate_notebook, generate_notebook_from_template
+from experiments.training_job import TrainingJob, TrainingJobConfig
 
 
 class TestNotebookGeneration:
     """Test notebook generation produces expected outcomes."""
-    
+
     def test_generates_valid_jupyter_notebook(self):
         """Test that generated file is a valid Jupyter notebook."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            filepath = generate_notebook(
-                name="test_notebook",
-                output_dir=tmpdir
-            )
-            
+            filepath = generate_notebook(name="test_notebook", output_dir=tmpdir)
+
             # File should exist
             assert os.path.exists(filepath)
             assert filepath.endswith(".ipynb")
-            
+
             # Should be valid JSON
             with open(filepath) as f:
                 notebook = json.load(f)
-            
+
             # Should have notebook structure
             assert "cells" in notebook
             assert "metadata" in notebook
             assert "nbformat" in notebook
             assert notebook["nbformat"] == 4
-    
-    def test_notebook_contains_requested_sections(self):
-        """Test that notebook contains only requested sections."""
+
+    def test_setup_returns_state_and_configs(self):
+        """Test that setup_notebook returns (state, configs) tuple."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Generate with specific sections
-            filepath = generate_notebook(
-                name="selective_notebook",
-                sections=["setup", "launch", "monitor"],
-                output_dir=tmpdir
-            )
-            
+            filepath = generate_notebook(name="test_setup", output_dir=tmpdir)
+
             with open(filepath) as f:
                 notebook = json.load(f)
+
+            # Find setup cell
+            setup_cell = None
+            for cell in notebook["cells"]:
+                if cell["cell_type"] == "code" and "setup_notebook" in "".join(cell["source"]):
+                    setup_cell = "".join(cell["source"])
+                    break
+
+            assert setup_cell is not None
+            # Should return state and configs
+            assert "state, configs = setup_notebook" in setup_cell
+
+    def test_imports_print_based_functions(self):
+        """Test that notebook imports print-based functions."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = generate_notebook(name="test_imports", output_dir=tmpdir)
+
+            with open(filepath) as f:
+                notebook = json.load(f)
+
+            # Find import cell
+            import_cell = None
+            for cell in notebook["cells"]:
+                if cell["cell_type"] == "code" and "from experiments.notebooks.state import" in "".join(cell["source"]):
+                    import_cell = "".join(cell["source"])
+                    break
+
+            assert import_cell is not None
+            # Should import all print-based functions
+            assert "print_configs" in import_cell
+            assert "print_jobs" in import_cell
+            assert "launch_all" in import_cell
+            assert "kill_all" in import_cell
+            assert "print_wandb_runs" in import_cell
+            assert "plot_sps" in import_cell
+            assert "plot_metrics" in import_cell
+            assert "list_replays" in import_cell
+            assert "show_replay" in import_cell
+            assert "export_notebook" in import_cell
+            assert "reset_configs" in import_cell
+            # Should NOT import widget classes
+            assert "Widget" not in import_cell
+
+    def test_section_order_monitor_before_config(self):
+        """Test that monitor section comes before config section."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Use default sections
+            filepath = generate_notebook(name="test_order", output_dir=tmpdir)
+
+            with open(filepath) as f:
+                notebook = json.load(f)
+
+            # Find section positions
+            monitor_pos = None
+            config_pos = None
             
-            # Extract section headers
-            section_headers = []
+            for i, cell in enumerate(notebook["cells"]):
+                if cell["cell_type"] == "markdown":
+                    content = "".join(cell["source"])
+                    if "Monitor & Control" in content:
+                        monitor_pos = i
+                    elif "Training Configuration" in content:
+                        config_pos = i
+
+            # Monitor should come before config
+            assert monitor_pos is not None
+            assert config_pos is not None
+            assert monitor_pos < config_pos
+
+    def test_config_section_has_three_cells(self):
+        """Test that config section has exactly 3 cells as requested."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = generate_notebook(name="test_config_cells", output_dir=tmpdir)
+
+            with open(filepath) as f:
+                notebook = json.load(f)
+
+            # Find config section
+            config_section_start = None
+            for i, cell in enumerate(notebook["cells"]):
+                if cell["cell_type"] == "markdown" and "Training Configuration" in "".join(cell["source"]):
+                    config_section_start = i
+                    break
+
+            assert config_section_start is not None
+
+            # Next 3 cells should be code cells
+            assert notebook["cells"][config_section_start + 1]["cell_type"] == "code"
+            assert notebook["cells"][config_section_start + 2]["cell_type"] == "code"
+            assert notebook["cells"][config_section_start + 3]["cell_type"] == "code"
+
+            # Check content
+            cell1 = "".join(notebook["cells"][config_section_start + 1]["source"])
+            cell2 = "".join(notebook["cells"][config_section_start + 2]["source"])
+            cell3 = "".join(notebook["cells"][config_section_start + 3]["source"])
+
+            # Cell 1: print configs
+            assert "print_configs(configs)" in cell1
+
+            # Cell 2: edit configs and print again
+            assert "configs[0]" in cell2
+            assert "print_configs(configs)" in cell2
+            # Should not have append example
+            assert "append" not in cell2
+
+            # Cell 3: launch all
+            assert "launch_all(state)" in cell3
+
+    def test_no_widget_references(self):
+        """Test that generated notebooks don't reference widgets."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = generate_notebook(
+                name="test_no_widgets",
+                sections=["setup", "monitor", "config", "analysis"],
+                output_dir=tmpdir
+            )
+
+            with open(filepath) as f:
+                notebook = json.load(f)
+
+            # Check all code cells
+            for cell in notebook["cells"]:
+                if cell["cell_type"] == "code":
+                    content = "".join(cell["source"])
+                    # Should not have widget references
+                    assert "widget" not in content.lower()
+                    assert ".display()" not in content
+                    assert "ipywidgets" not in content
+
+    def test_training_jobs_in_setup(self):
+        """Test that training jobs are properly passed to setup."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create training jobs
+            jobs = [
+                TrainingJob(name="job1", config=TrainingJobConfig(curriculum="arena")),
+                TrainingJob(name="job2", config=TrainingJobConfig(curriculum="harvest"))
+            ]
+            jobs[0].job_id = "sky-123"
+            jobs[0].launched = True
+            jobs[0].success = True
+
+            filepath = generate_notebook(
+                name="test_jobs",
+                training_jobs=jobs,
+                output_dir=tmpdir
+            )
+
+            with open(filepath) as f:
+                notebook = json.load(f)
+
+            # Find setup cell
+            setup_cell = None
+            for cell in notebook["cells"]:
+                if cell["cell_type"] == "code" and "experiment_data=" in "".join(cell["source"]):
+                    setup_cell = "".join(cell["source"])
+                    break
+
+            assert setup_cell is not None
+            # Should have job data
+            assert "'jobs': [" in setup_cell
+            assert "'name': 'job1'" in setup_cell
+            assert "'job_id': 'sky-123'" in setup_cell
+            assert "'launched': True" in setup_cell
+
+    def test_training_configs_in_setup(self):
+        """Test that training configs are properly passed to setup."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create training configs
+            configs = [
+                TrainingJobConfig(curriculum="arena", gpus=4),
+                TrainingJobConfig(curriculum="harvest", gpus=2, wandb_tags=["test"])
+            ]
+
+            filepath = generate_notebook(
+                name="test_configs",
+                training_job_configs=configs,
+                output_dir=tmpdir
+            )
+
+            with open(filepath) as f:
+                notebook = json.load(f)
+
+            # Find setup cell
+            setup_cell = None
+            for cell in notebook["cells"]:
+                if cell["cell_type"] == "code" and "experiment_data=" in "".join(cell["source"]):
+                    setup_cell = "".join(cell["source"])
+                    break
+
+            assert setup_cell is not None
+            # Should have config data
+            assert "'configs': [" in setup_cell
+            assert "'curriculum': 'arena'" in setup_cell
+            assert "'gpus': 4" in setup_cell
+            assert "'wandb_tags': ['test']" in setup_cell
+
+    def test_analysis_section_uses_print_functions(self):
+        """Test that analysis section uses print-based functions."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = generate_notebook(
+                name="test_analysis",
+                sections=["setup", "analysis"],
+                output_dir=tmpdir
+            )
+
+            with open(filepath) as f:
+                notebook = json.load(f)
+
+            # Find analysis cells
+            analysis_cells = []
+            in_analysis = False
+            for cell in notebook["cells"]:
+                if cell["cell_type"] == "markdown" and "Analysis" in "".join(cell["source"]):
+                    in_analysis = True
+                elif cell["cell_type"] == "markdown" and "##" in "".join(cell["source"]):
+                    in_analysis = False
+                elif in_analysis and cell["cell_type"] == "code":
+                    analysis_cells.append("".join(cell["source"]))
+
+            # Should use print functions
+            analysis_content = "\n".join(analysis_cells)
+            assert "print_wandb_runs(state)" in analysis_content
+            assert "plot_sps(state)" in analysis_content
+            assert "plot_metrics(state" in analysis_content
+
+    def test_monitor_section_uses_print_functions(self):
+        """Test that monitor section uses print-based functions."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = generate_notebook(
+                name="test_monitor",
+                sections=["setup", "monitor"],
+                output_dir=tmpdir
+            )
+
+            with open(filepath) as f:
+                notebook = json.load(f)
+
+            # Find monitor cells
+            monitor_cells = []
+            in_monitor = False
+            for cell in notebook["cells"]:
+                if cell["cell_type"] == "markdown" and "Monitor & Control" in "".join(cell["source"]):
+                    in_monitor = True
+                elif cell["cell_type"] == "markdown" and "##" in "".join(cell["source"]):
+                    in_monitor = False
+                elif in_monitor and cell["cell_type"] == "code":
+                    monitor_cells.append("".join(cell["source"]))
+
+            # Should use print functions
+            monitor_content = "\n".join(monitor_cells)
+            assert "print_jobs(state)" in monitor_content
+            assert "launch_all(state)" in monitor_content
+            assert "kill_all(state)" in monitor_content
+
+    def test_simplified_notebook_sections(self):
+        """Test that simplified notebooks have the right sections."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Don't specify sections - should use DEFAULT_SECTIONS
+            filepath = generate_notebook(
+                name="test_simplified",
+                output_dir=tmpdir
+            )
+
+            with open(filepath) as f:
+                notebook = json.load(f)
+
+            # Count sections
+            sections = []
             for cell in notebook["cells"]:
                 if cell["cell_type"] == "markdown":
                     content = "".join(cell["source"])
                     if content.strip().startswith("## "):
-                        section_headers.append(content.strip())
-            
-            # Should have requested sections
-            assert "## Setup" in section_headers
-            # Launch section now has emoji
-            assert any("Launch Training" in header for header in section_headers)
-            # Monitor section is now integrated into status widget
-            assert "monitor" in ["setup", "launch", "monitor"]  # Just verify it was requested
-            
-            # Should NOT have other sections
-            assert "## Analysis" not in section_headers
-            assert "## View Replays" not in section_headers
-            assert "## Scratch Space" not in section_headers
-    
-    def test_research_notebook_starts_empty(self):
-        """Test that research notebooks start with empty state."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            filepath = generate_notebook(
-                name="research_notebook",
-                description="For exploratory research",
-                output_dir=tmpdir
-            )
-            
-            with open(filepath) as f:
-                notebook = json.load(f)
-            
-            # Find state management cell
-            state_cell_content = None
-            for cell in notebook["cells"]:
-                if cell["cell_type"] == "code" and "init_state" in "".join(cell["source"]):
-                    state_cell_content = "".join(cell["source"])
-                    break
-            
-            assert state_cell_content is not None
-            # Should initialize with empty lists via init_state
-            assert "wandb_run_names=[]" in state_cell_content
-            assert "skypilot_job_ids=[]" in state_cell_content
-    
-    def test_experiment_notebook_has_prefilled_data(self):
-        """Test that experiment notebooks have pre-filled run data."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            wandb_names = ["user.exp.run1", "user.exp.run2", "user.exp.run3"]
-            sky_ids = ["sky-123", "sky-456", "sky-789"]
-            
-            filepath = generate_notebook(
-                name="experiment_analysis",
-                wandb_run_names=wandb_names,
-                skypilot_job_ids=sky_ids,
-                additional_metadata={"experiment_type": "ablation"},
-                output_dir=tmpdir
-            )
-            
-            with open(filepath) as f:
-                notebook = json.load(f)
-            
-            # Find state cell
-            state_content = None
-            for cell in notebook["cells"]:
-                if cell["cell_type"] == "code" and "init_state" in "".join(cell["source"]):
-                    state_content = "".join(cell["source"])
-                    break
-            
-            assert state_content is not None
-            # Should have pre-filled data
-            assert "wandb_run_names=['user.exp.run1', 'user.exp.run2', 'user.exp.run3']" in state_content
-            assert "skypilot_job_ids=['sky-123', 'sky-456', 'sky-789']" in state_content
-            assert '"experiment_type": "ablation"' in state_content
-    
-    def test_notebook_includes_working_imports(self):
-        """Test that generated notebooks have correct imports."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            filepath = generate_notebook(
-                name="import_test",
-                sections=["setup", "state"],  # Include state section to get more imports
-                output_dir=tmpdir
-            )
-            
-            with open(filepath) as f:
-                notebook = json.load(f)
-            
-            # Find cells with imports
-            import_cells = []
-            for cell in notebook["cells"]:
-                if cell["cell_type"] == "code" and "import" in "".join(cell["source"]):
-                    import_cells.append("".join(cell["source"]))
-            
-            # Combine all imports
-            all_imports = "\n".join(import_cells)
-            
-            assert len(import_cells) > 0
-            # Should import from correct new locations
-            assert "from experiments.notebooks.state import" in all_imports
-            assert "from experiments.training_job import TrainingJob" in all_imports
-            assert "import ipywidgets" in all_imports or "import os" in all_imports
-    
-    def test_template_wrapper_maintains_compatibility(self):
-        """Test that the template wrapper function works correctly."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Use the backwards-compatibility wrapper
-            filepath = generate_notebook_from_template(
-                experiment_name="compat_test",
-                run_names=["run1", "run2"],
-                sky_job_ids=["sky1", "sky2"],
-                output_dir=tmpdir
-            )
-            
-            assert os.path.exists(filepath)
-            assert "compat_test" in filepath  # May include timestamp
-            
-            with open(filepath) as f:
-                notebook = json.load(f)
-            
-            # Should have experiment name in title
-            title_cell = notebook["cells"][0]
-            assert "compat_test" in "".join(title_cell["source"])
-            
-            # Should have description somewhere in early cells
-            found_description = False
-            for i in range(min(5, len(notebook["cells"]))):
-                cell_content = "".join(notebook["cells"][i]["source"])
-                if "Analysis notebook for compat_test experiment" in cell_content:
-                    found_description = True
-                    break
-            assert found_description
-    
-    def test_notebook_sections_are_self_contained(self):
-        """Test that each section can work independently."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Generate notebook with only monitor section
-            filepath = generate_notebook(
-                name="monitor_only",
-                sections=["setup", "state", "monitor"],
-                wandb_run_names=["test.run"],
-                output_dir=tmpdir
-            )
-            
-            with open(filepath) as f:
-                notebook = json.load(f)
-            
-            # Should still be able to monitor without launch/metrics sections
-            code_cells = [cell for cell in notebook["cells"] if cell["cell_type"] == "code"]
-            
-            # Should have monitoring code that references job_status
-            monitor_code = "".join(["".join(cell["source"]) for cell in code_cells])
-            assert "job_status" in monitor_code
-            assert "wandb_run_names" in monitor_code
-    
-    def test_invalid_sections_are_ignored(self):
-        """Test that invalid section names are ignored gracefully."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Try to include non-existent sections
-            filepath = generate_notebook(
-                name="invalid_sections",
-                sections=["setup", "invalid_section", "another_bad_one", "monitor"],
-                output_dir=tmpdir
-            )
-            
-            # Should still generate successfully
-            assert os.path.exists(filepath)
-            
-            with open(filepath) as f:
-                notebook = json.load(f)
-            
-            # Should only have valid sections
-            section_headers = []
-            for cell in notebook["cells"]:
-                if cell["cell_type"] == "markdown" and "## " in "".join(cell["source"]):
-                    section_headers.append("".join(cell["source"]).strip())
-            
-            assert "## Setup" in section_headers
-            # Monitor section is now integrated into the status widget, not a separate section
-            # Check that we didn't create sections for invalid names
-            assert "## invalid_section" not in section_headers
+                        sections.append(content.strip())
+
+            # Should have setup, monitor, config sections
+            assert any("Setup" in s for s in sections)
+            assert any("Monitor" in s for s in sections)
+            assert any("Configuration" in s for s in sections)
+            # Should NOT have other sections by default
+            assert not any("Analysis" in s for s in sections)
+            assert not any("Replays" in s for s in sections)
+            assert not any("Export" in s for s in sections)
