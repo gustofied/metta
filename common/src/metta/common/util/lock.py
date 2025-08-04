@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from typing import Callable, TypeVar
 
+import torch
 import torch.distributed as dist
 
 T = TypeVar("T")
@@ -16,8 +17,10 @@ def _init_process_group() -> bool:
         return False
 
     rank = int(os.environ.get("RANK", os.environ.get("NODE_INDEX", "0")))
+    # Use NCCL for GPU, Gloo for CPU
+    backend = "nccl" if torch.cuda.is_available() else "gloo"
     dist.init_process_group(
-        backend="nccl",
+        backend=backend,
         init_method=os.environ.get("DIST_URL", "env://"),
         world_size=world_size,
         rank=rank,
@@ -31,7 +34,7 @@ def run_once(fn: Callable[[], T]) -> T:
     If ``torch.distributed`` is not initialized, this function will attempt to
     initialize it using environment variables typically provided when running
     multi-node jobs (``WORLD_SIZE``/``NUM_NODES`` and ``RANK``/``NODE_INDEX``).
-    The NCCL backend is used.
+    The NCCL backend is used for GPU, Gloo for CPU.
     """
     group_initialized = _init_process_group()
     if dist.is_initialized():
