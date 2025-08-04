@@ -24,7 +24,11 @@ export NUM_NODES=${SKYPILOT_NUM_NODES}
 export MASTER_ADDR=$(echo "${SKYPILOT_NODE_IPS}" | head -n1)
 export MASTER_PORT=8008
 export NODE_INDEX=${SKYPILOT_NODE_RANK}
-export NCCL_SHM_DISABLE=1
+
+# NCCL configuration for multi-node GPU training
+export NCCL_P2P_DISABLE=1      # Disable P2P communication (often problematic in cloud)
+export NCCL_IB_DISABLE=1       # Disable InfiniBand (not available in most cloud environments)
+export NCCL_DEBUG=INFO         # Enable debug logging for troubleshooting
 EOF
 
 # Create job secrets
