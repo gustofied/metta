@@ -98,6 +98,11 @@ envs:
   SKYPILOT_DOCKER_USERNAME: ""
   SKYPILOT_DOCKER_PASSWORD: ""
   SKYPILOT_DOCKER_SERVER: 751442549699.dkr.ecr.us-east-1.amazonaws.com
+  
+  # NCCL environment variables to fix multi-node training issues
+  NCCL_P2P_DISABLE: "1"  # Disable P2P communication which can cause issues in cloud environments
+  NCCL_IB_DISABLE: "1"   # Disable InfiniBand support (not available in most cloud environments)
+  NCCL_DEBUG: "INFO"     # Enable debug logging for troubleshooting
 
 secrets:
   # configured by launch script based on local credentials

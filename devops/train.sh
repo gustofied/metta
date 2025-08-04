@@ -45,6 +45,16 @@ echo "  - Master port: $MASTER_PORT"
 echo "  - Node index: $NODE_INDEX"
 echo "  - Arguments: $args"
 
+# Export NCCL environment variables for multi-node training
+export NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+export NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-1}
+export NCCL_DEBUG=${NCCL_DEBUG:-INFO}
+
+echo "[CONFIG] NCCL configuration:"
+echo "  - NCCL_P2P_DISABLE: $NCCL_P2P_DISABLE"
+echo "  - NCCL_IB_DISABLE: $NCCL_IB_DISABLE"
+echo "  - NCCL_DEBUG: $NCCL_DEBUG"
+
 echo "[INFO] Starting training..."
 
 set +e
