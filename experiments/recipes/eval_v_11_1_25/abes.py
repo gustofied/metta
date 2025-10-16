@@ -106,6 +106,7 @@ def train(
     curriculum: Optional[CurriculumConfig] = None,
     enable_detailed_slice_logging: bool = False,
     policy_architecture: Optional[PolicyArchitecture] = None,
+    l2_renorm: Optional[float] = 0.0,
 ) -> TrainTool:
     curriculum = curriculum or make_curriculum(
         enable_detailed_slice_logging=enable_detailed_slice_logging
@@ -119,13 +120,17 @@ def train(
     if policy_architecture is None:
         policy_architecture = ViTDefaultConfig()
 
-    return TrainTool(
+    tool = TrainTool(
         trainer=trainer_cfg,
         training_env=TrainingEnvironmentConfig(curriculum=curriculum),
         evaluator=EvaluatorConfig(simulations=eval_simulations),
         policy_architecture=policy_architecture,
         torch_profiler=TorchProfilerConfig(),
     )
+
+    tool.trainer.optimizer.weight_decay = l2_renorm
+
+    return tool
 
 
 def evaluate(policy_uris: Optional[Sequence[str]] = None) -> EvaluateTool:
@@ -162,7 +167,7 @@ def evaluate_in_sweep(policy_uri: str) -> EvaluateTool:
 
     simulations = [
         SimulationConfig(
-            suite="sweep",
+            suite="sweep",  # av this is where we get suite name
             name="basic",
             env=basic_env,
             num_episodes=10,  # 10 episodes for statistical reliability
@@ -211,11 +216,12 @@ def sweep(sweep_name: str) -> SweepTool:
 
     # Common parameters are accessible via SP (SweepParameters).
     parameters = [
-        SP.LEARNING_RATE,
-        SP.PPO_CLIP_COEF,
-        SP.PPO_GAE_LAMBDA,
-        SP.PPO_VF_COEF,
-        SP.ADAM_EPS,
+        # SP.LEARNING_RATE,
+        # SP.PPO_CLIP_COEF,
+        # SP.PPO_GAE_LAMBDA,
+        # SP.PPO_VF_COEF,
+        # SP.ADAM_EPS,
+        SP.param("l2_renorm", D.UNIFORM, min=0.0, max=0.01, search_center=0.0001),
         SP.param(
             "trainer.total_timesteps",
             D.INT_UNIFORM,
@@ -227,7 +233,7 @@ def sweep(sweep_name: str) -> SweepTool:
 
     return make_sweep(
         name=sweep_name,
-        recipe="experiments.recipes.arena_basic_easy_shaped",
+        recipe="experiments.recipes.arena_basic_easy_shaped",  # av change
         train_entrypoint="train",
         # NB: You MUST use a specific sweep eval suite, different than those in training.
         # Besides this being a recommended practice, using the same eval suite in both
