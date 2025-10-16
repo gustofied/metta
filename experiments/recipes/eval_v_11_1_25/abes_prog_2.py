@@ -48,9 +48,8 @@ def mettagrid(num_agents: int = 24) -> MettaGridConfig:
     if isinstance(altar, ConverterConfig) and hasattr(altar, "input_resources"):
         altar.input_resources["battery_red"] = 1
 
-    # Override defaults: set room size to 30x30 and disable attack action
-    arena_env.game.map_builder.width = 35
-    arena_env.game.map_builder.height = 35
+    arena_env.game.map_builder.width = 45
+    arena_env.game.map_builder.height = 45
     arena_env.game.actions.attack.enabled = False
 
     return arena_env
