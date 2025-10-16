@@ -28,19 +28,19 @@ def mettagrid(num_agents: int = 24) -> MettaGridConfig:
 
     arena_env.game.agent.rewards.inventory = {
         "heart": 1,
-        "ore_red": 0.1,
-        "battery_red": 0.8,
-        "laser": 0.5,
-        "armor": 0.5,
-        "blueprint": 0.5,
+        # "ore_red": 0.1,
+        # "battery_red": 0.8,
+        # "laser": 0.5,
+        # "armor": 0.5,
+        # "blueprint": 0.5,
     }
     arena_env.game.agent.rewards.inventory_max = {
         "heart": 100,
-        "ore_red": 1,
-        "battery_red": 1,
-        "laser": 1,
-        "armor": 1,
-        "blueprint": 1,
+        # "ore_red": 1,
+        # "battery_red": 1,
+        # "laser": 1,
+        # "armor": 1,
+        # "blueprint": 1,
     }
 
     # Easy converter: 1 battery_red to 1 heart (instead of 3 to 1)
