@@ -167,7 +167,7 @@ def evaluate_in_sweep(policy_uri: str) -> EvaluateTool:
 
     simulations = [
         SimulationConfig(
-            suite="sweep",  # av this is where we get suite name
+            suite="sweep",
             name="basic",
             env=basic_env,
             num_episodes=10,  # 10 episodes for statistical reliability
@@ -233,7 +233,7 @@ def sweep(sweep_name: str) -> SweepTool:
 
     return make_sweep(
         name=sweep_name,
-        recipe="experiments.recipes.arena_basic_easy_shaped",  # av change
+        recipe="experiments.recipes.eval_v_11_1_25.abes",
         train_entrypoint="train",
         # NB: You MUST use a specific sweep eval suite, different than those in training.
         # Besides this being a recommended practice, using the same eval suite in both
