@@ -18,7 +18,12 @@ import triton.language as tl
 from einops import rearrange
 from torch import Tensor
 from torch.amp import custom_bwd, custom_fwd
-from triton import OutOfResources
+
+# OutOfResources moved in newer triton versions; fallback to RuntimeError
+try:
+    from triton import OutOfResources
+except ImportError:
+    OutOfResources = RuntimeError
 
 # -----------------------------------------------------------------------------
 # Utility helpers (mirrors flashrnn.triton_fused.triton_utils)
