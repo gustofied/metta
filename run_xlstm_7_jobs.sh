@@ -30,16 +30,25 @@ echo ""
 # Launch 7 jobs
 for i in {1..7}; do
     RUN_NAME="${BASE_NAME}_${TIMESTAMP}_run${i}"
-    
+
     echo "Launching job ${i}/7: ${RUN_NAME}"
-    
+
+    # Run the launch command and capture exit code
     ./devops/skypilot/launch.py "${RECIPE}" \
-        run="${RUN_NAME}" \
+        --run "${RUN_NAME}" \
         trainer.total_timesteps="${TIMESTEPS}"
-    
-    echo "✓ Job ${i} launched: ${RUN_NAME}"
+
+    EXIT_CODE=$?
+
+    if [ $EXIT_CODE -eq 0 ]; then
+        echo "✓ Job ${i} launched successfully: ${RUN_NAME}"
+    else
+        echo "✗ Job ${i} failed with exit code ${EXIT_CODE}: ${RUN_NAME}"
+        echo "Continuing with remaining jobs..."
+    fi
+
     echo ""
-    
+
     # Small delay to avoid overwhelming the system
     sleep 2
 done
