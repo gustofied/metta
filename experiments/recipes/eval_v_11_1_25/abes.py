@@ -212,6 +212,9 @@ def sweep(sweep_name: str) -> SweepTool:
         8 - Attach to look at status/output: `tmux attach -t sweep_configs`
 
     Please tag Axel (akerbec@softmax.ai) on any bug report.
+
+    In wandb, add a panel with a scatter plot. On the x-axis, put sweep/suggestion/<your value>. On the y-axis, put
+    sweep/score or evaluator/eval_sweep/score.
     """
 
     # Common parameters are accessible via SP (SweepParameters).
